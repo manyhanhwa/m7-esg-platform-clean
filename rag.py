@@ -1,7 +1,12 @@
 import os, json
 import numpy as np
 import faiss
+import os
 from openai import OpenAI
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 INDEX_DIR = "index"
 EMBED_MODEL = "text-embedding-3-small"
