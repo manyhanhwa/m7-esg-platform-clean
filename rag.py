@@ -1,17 +1,16 @@
-import os, json
-import numpy as np
-import faiss
 import os
+import json
+import faiss
+import numpy as np
 from openai import OpenAI
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 INDEX_DIR = "index"
 EMBED_MODEL = "text-embedding-3-small"
 
-client = OpenAI()
+# ✅ 키가 없으면 client를 만들지 않는다 (데모 모드/배포 초기 대응)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
 
 def load_index():
     idx_path = os.path.join(INDEX_DIR, "faiss.index")
@@ -26,18 +25,38 @@ def load_index():
             meta.append(json.loads(line))
     return index, meta
 
-def embed_query(q: str) -> np.ndarray:
-    res = client.embeddings.create(model=EMBED_MODEL, input=[q])
-    v = np.array(res.data[0].embedding, dtype="float32")[None, :]
-    faiss.normalize_L2(v)
+
+def embed(text: str) -> np.ndarray:
+    if client is None:
+        raise RuntimeError("OPENAI_API_KEY가 없어 임베딩을 생성할 수 없습니다.")
+    resp = client.embeddings.create(model=EMBED_MODEL, input=text)
+    v = np.array(resp.data[0].embedding, dtype=np.float32)
     return v
 
-def retrieve(q: str, k=8):
+
+def retrieve(query: str, k: int = 8):
+    """
+    hits: [{"text":..., "source":..., "page":..., "score":...}]
+    """
+    # ✅ 키 없으면 RAG는 꺼진 것으로 처리
+    if client is None:
+        raise RuntimeError("OPENAI_API_KEY가 없어 RAG를 실행할 수 없습니다.")
+
     index, meta = load_index()
-    v = embed_query(q)
-    scores, ids = index.search(v, k)
-    results = []
-    for score, idx in zip(scores[0], ids[0]):
-        m = meta[int(idx)]
-        results.append({**m, "score": float(score)})
-    return results
+    qv = embed(query)
+
+    D, I = index.search(qv.reshape(1, -1), k)
+    hits = []
+    for score, idx in zip(D[0].tolist(), I[0].tolist()):
+        if idx < 0 or idx >= len(meta):
+            continue
+        row = meta[idx]
+        hits.append(
+            {
+                "text": row.get("text", ""),
+                "source": row.get("source", "unknown"),
+                "page": row.get("page", -1),
+                "score": float(score),
+            }
+        )
+    return hits
